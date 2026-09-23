@@ -40,3 +40,10 @@ Examples:
   mm success 5
   mm party 8
 ```
+
+# Installing
+
+1. Get the binary release from https://github.com/todbot/hidapitester/releases and put it in your path
+2. Get the mm script and put that in your path
+3. run `mm detect` to find your muteme and write the config file of the right device
+4. `mm party`
