@@ -63,7 +63,8 @@ Commands:
   processing [seconds]         Pulsing yellow  (Claude Code: working)
   success [seconds]            Pulsing green   (Claude Code: done)
   needinput [seconds]          Pulsing red     (Claude Code: needs input)
-  party [seconds]              Cycle through a rainbow (default 10 seconds), then turn off
+  fail [seconds]               Solid red, then off (default 4 seconds)
+  party [seconds]              Cycle through a rainbow (default 4 seconds), then turn off
   off                          Turn the LED off
   start                        (Re)start MuteMe-Client.app and hand the LED back to it
   stop                         Quit MuteMe-Client.app without changing the LED
@@ -78,9 +79,10 @@ Effects (default: solid):
   slowpulse          Slow pulse
 
 Seconds (whole number): turn the LED off after that long. Returns immediately and
-turns off in the background (except party, which runs in the foreground). Without
-seconds the LED stays on until the next command. Slow pulse is kept alive by a
-background re-send every 4 seconds. Any later command cancels background work.
+turns off in the background. Without seconds the LED stays on until the next
+command (party and fail have defaults).
+Slow pulse is kept alive by a background re-send every 4 seconds. Any later
+command cancels background work.
 
 Every command except help quits MuteMe-Client.app first, because it holds the
 device open. Run '$me start' to give the LED back to the app.
@@ -238,6 +240,7 @@ TEST_STEPS=(
   "processing: fast-pulsing yellow|processing"
   "success: fast-pulsing green|success"
   "needinput: fast-pulsing red|needinput"
+  "fail: solid red that turns itself off after 4 seconds|fail"
   "Solid green that turns itself off after 3 seconds|green 3"
   "Party: solid rainbow colors cycling for 3 seconds, then off|party 3"
   "Off|off"
@@ -341,6 +344,7 @@ case "$cmd" in
   processing) no_effect; code=35 ;; # yellow + pulse
   success)    no_effect; code=34 ;; # green + pulse
   needinput)  no_effect; code=33 ;; # red + pulse
+  fail)       no_effect; code=1; secs=${secs:-4} ;; # solid red
   *)
     effect=$(effect_code "$effect_arg")
     color=$(color_code "$cmd") || usage_error "unknown command or color '$cmd'"
@@ -370,14 +374,19 @@ case "$cmd" in
     # shuffled order with no color twice in a row, including across the wrap-around.
     rainbow=(5 2 7 1 6 3 4 7 2 5 1 3 6 7 4 2 1 5 3 7 6 1 4 6)
     offset=$(( RANDOM % ${#rainbow[@]} ))
-    sleep "${secs:-10}" &
-    party_timer=$!
-    for ((i = 0; ; i++)); do
-      kill -0 "$party_timer" 2>/dev/null || break
-      send "${rainbow[(i + offset) % ${#rainbow[@]}]}"
-      sleep 0.07
-    done
-    send 0
+    (
+      sleep "${secs:-4}" &
+      party_timer=$!
+      for ((i = 0; ; i++)); do
+        kill -0 "$party_timer" 2>/dev/null || break
+        send "${rainbow[(i + offset) % ${#rainbow[@]}]}"
+        sleep 0.07
+      done
+      rm -f "$BG_FILE"
+      send 0
+    ) </dev/null >/dev/null 2>&1 &
+    echo $! >"$BG_FILE"
+    disown
     ;;
   *)
     send "$code"
