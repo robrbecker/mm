@@ -1,11 +1,72 @@
 #!/bin/bash
 # Set the MuteMe LED color/effect via hidapitester. Run with no arguments for help.
-#
-# Protocol (MuteMe Original, vid:pid 3603:0001): a 2-byte output report
-# [0x00, color+effect]. The Original only has 3-bit color (R/G/B on or off), so
-# only the 7 named colors exist.
 # MuteMe-Client.app holds the device open, so it is quit before any LED write.
 # Fails silently so a disconnected/busy device never breaks a Claude Code hook.
+#
+# ---------------------------------------------------------------------------------
+# MuteMe HID protocol reference
+# ---------------------------------------------------------------------------------
+# Sources: the official client's bundled driver (MuteMe-Client.app/.../node_modules/
+# @muteme/device-controller/src/sdks/MuteMeOriginals/sdk.ts), the muteme-diy driver
+# (github.com/red-fox-star/muteme-diy) and mutebtn (github.com/merll/mutebtn). Items
+# marked [tested] were checked on this device: MuteMe Original, 3603:0001.
+#
+# Transport: HID output report [0x00, CMD]. 0x00 is the report ID and CMD is one byte.
+#   hidapitester --vidpid 3603:0001 --open -l 2 --send-output 0,CMD
+# The report descriptor allows only 1 byte of output, so every LED always shows the
+# same color. The multi-color power-up animation is firmware-only. [tested]
+#
+# CMD bits: 0b0FEE0CCC  (F = 0x40 flag, EE = effect, CCC = color)
+#
+#   Color (bits 0-2)       Effect (bits 4-5)
+#     0x00 off               0x00 bright (solid)
+#     0x01 red               0x10 dim
+#     0x02 green             0x20 fast pulse
+#     0x03 yellow            0x30 slow pulse
+#     0x04 blue
+#     0x05 purple          Example: purple + slow pulse = 0x05 + 0x30 = 0x35
+#     0x06 cyan
+#     0x07 white
+#
+#   0x40 flag: the official client sends CMD, then CMD + 0x40 about 100ms later, and
+#     repeats both every 5 seconds as a keepalive. On this device [tested]:
+#       - slow pulse only starts after the + 0x40 write;
+#       - the + 0x40 write also arms a firmware auto-off after about 10 seconds;
+#       - a plain CMD write with no + 0x40 stays on indefinitely.
+#     So this script adds 0x40 only for slow pulse and re-sends it every 4 seconds.
+#     mutebtn uses a lone + 0x40 write as a brief "transition" flash.
+#
+#   0x08 "orange": listed as undocumented by muteme-diy for older hardware. On this
+#     device the LED stays off, solid or pulsing. [tested]
+#   0x70 (112): muteme-diy saw the device start reporting input value 5 after sending
+#     this. Effect unknown.
+#   0x80 (bit 7): no known use.
+#
+# Maintenance commands (official client). DO NOT SEND casually. Low nibble 0x9 is
+# maintenance space, so unknown values near these could also be destructive.
+#   0x09  Enter bootloader mode (for firmware updates).
+#   0x19  Restart device. The client only sends it for firmware revisions 1604-1609,
+#         1699, 1704-1709, 1804-1809, 1899 and 1904-1909 (USB bcdDevice).
+#   0x59  ERASE FIRMWARE. Same revision gate as restart. Can brick the button.
+#
+# Input reports (device -> host), read with: hidapitester ... --read-input-forever
+#   Byte 3 carries touch state:
+#     0 idle / no change
+#     1 still touching (repeats about every 100ms while held)
+#     2 touch released
+#     4 touch started
+#     5 unknown (muteme-diy saw it after sending 0x70)
+#   Official client gesture timing: long press after 1000ms (cancelled after 3000ms),
+#   double tap if the second touch starts within 300ms.
+#
+# Device IDs (vid:pid):
+#   3603:0001 Original (this device)   3603:0007 Two
+#   3603:0005 Click (HID, but a different protocol with full RGB; not supported)
+#   3603:0006 Signal                   3603:0010 E1    3603:0011 E2
+#   Older firmware: 20a0:42da Original, 20a0:42db Mini, 16c0:27db prototype
+#   The client's newest driver (device-controller4) also talks to some Originals over
+#   a serial port and fakes pulsing in software; that path doesn't apply to HID.
+# ---------------------------------------------------------------------------------
 
 APP_NAME="MuteMe-Client"
 APP_PATTERN="/Applications/MuteMe-Client.app/"
